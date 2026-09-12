@@ -1,6 +1,7 @@
 import logging
 import time
 import threading
+from datetime import datetime
 from vedirect import Vedirect
 
 logger = logging.getLogger()
@@ -57,10 +58,11 @@ class VictronSerial:
             else:
                 logging.info('Skipping incomplete packet, waiting for next packet for device info')
         pid = self.map['PID'][4](data['PID'], self.map['PID'])
-        if 'SER#' in self.map:
+        # serial may not be provided by some devices; return None if missing
+        if 'SER#' in self.map and 'SER#' in data:
             ser = self.map['SER#'][4](data['SER#'], self.map['SER#'])
         else:
-            ser = "SER# NOT SUPPORTED"
+            ser = None
         fw = self.map['FW'][4](data['FW'], self.map['FW'])
         return pid, ser, fw
 
@@ -109,6 +111,7 @@ class VictronSerial:
             if key == 'SER#':
                 self.send_out('PROD', value)
             self.send_out(key, value)
+        self.output_callback('Last Update', datetime.now().astimezone().isoformat(), 'timestamp')
 
     def send_out(self, key, value):
         if key not in self.map:

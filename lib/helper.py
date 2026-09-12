@@ -1,4 +1,5 @@
 import json
+import re
 
 ## START: BLUETOOTH CONVERT FUNCTIONS
 def extract_firmware_version(value):
@@ -12,11 +13,15 @@ def extract_firmware_version(value):
 
 def convert_value_number(value, command):
     converted = int.from_bytes(value, "little", signed=command[4])
-    return str(converted / command[3])
+    result = converted / command[3]
+    # return numeric type (float or int)
+    if float(result).is_integer():
+        return int(result)
+    return float(result)
 
 def convert_value_int(value, command):
     converted = int.from_bytes(value, "little", signed=command[4])
-    return str(int(converted / command[3]))
+    return int(converted / command[3])
 
 def convert_value_string(value, command):
     return str(value.decode("ASCII"))
@@ -47,10 +52,21 @@ def convert_int_factor(value, command):
         return str(value)
 
     data = int(value) * command[3]
-    if type(data) == int:
-        return str(data)
-    else:
-        return f'{data:.2f}'
+    # Return numeric types: int when whole, float otherwise (rounded to 2 decimals)
+    try:
+        f = float(data)
+        if f.is_integer():
+            return int(f)
+        return round(f, 2)
+    except Exception:
+        return data
+
+
+def convert_time_to_go(value, command):
+    """Convert the VE.Direct TTG -1 sentinel to Home Assistant's unknown state."""
+    if str(value) == '-1':
+        return 'unknown'
+    return convert_int_factor(value, command)
 
 
 def convert_str_out(value, command):
@@ -58,7 +74,12 @@ def convert_str_out(value, command):
 
 
 def convert_map_out(value, command):
-    return f'{value}: {command[3][value]}'
+    # Return only the mapped name (e.g. "SmartShunt 300A/50mV") without the hex PID prefix
+    try:
+        return command[3][value]
+    except Exception:
+        # fallback to a reasonable string if mapping missing
+        return str(value)
 
 
 def convert_warn_ar(value, command):
@@ -95,6 +116,51 @@ def collection_check_full(collection):
     return True
 
 
+def slugify_identifier(value):
+    """Return a Home Assistant MQTT discovery topic-safe identifier."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '_', str(value)).strip('_') or 'sensor'
+
+
+def add_hass_sensor_metadata(config, category, description, unit):
+    """Add Home Assistant sensor metadata for a mapped Victron value."""
+    device_classes = {
+        '%': 'battery',
+        'V': 'voltage',
+        'A': 'current',
+        'W': 'power',
+        '°C': 'temperature',
+        'Wh': 'energy',
+        'kWh': 'energy',
+        'min': 'duration',
+        's': 'duration',
+    }
+    display_precision = {
+        '%': 1,
+        'V': 2,
+        'A': 2,
+        'Ah': 2,
+        'W': 0,
+        'Wh': 2,
+        'kWh': 2,
+        '°C': 0,
+        'min': 0,
+        's': 0,
+    }
+
+    # Home Assistant has no valid sensor device_class for Ah (amp-hours).
+    if unit:
+        config['unit_of_measurement'] = unit
+        config['state_class'] = 'measurement'
+        config['suggested_display_precision'] = display_precision.get(unit, 0)
+
+    if unit in device_classes:
+        config['device_class'] = device_classes[unit]
+
+    # Only lifetime energy counters are monotonic. Daily and yesterday values reset.
+    if description in ('Energy All Time', 'Total Charged Energy', 'Total Discharged Energy'):
+        config['state_class'] = 'total_increasing'
+
+
 def build_hass_discovery_config(device_name, model, serial, firmware, sensor_config, base_topic, subtopic, value_template, collection):
     """
     Builds the config for homeassistant mqtt discovery
@@ -109,63 +175,36 @@ def build_hass_discovery_config(device_name, model, serial, firmware, sensor_con
     :param collection: None or a collection
     :return:
     """
-    hass_config_topic = f'homeassistant/sensor/{device_name}/{value_template.replace(" ", "_")}/config'
-    hass_config_data = {}
+    category, description, unit, _, _ = sensor_config
+    device_id = slugify_identifier(device_name)
+    entity_id = slugify_identifier(value_template)
+    hass_config_topic = f'homeassistant/sensor/{device_id}/{entity_id}/config'
+    hass_config_data = {
+        'unique_id': f'victron_{device_id}_{entity_id}',
+        'name': value_template,
+        'state_topic': f'{base_topic}/{device_name}/{subtopic}',
+        'availability_topic': f'{base_topic}/{device_name}/online',
+        'payload_available': '1',
+        'payload_not_available': '0',
+    }
 
-    if collection is not None:
-        hass_config_data["unique_id"] = f'{device_name}_{value_template}_{collection}_victron'
-        hass_config_data["name"] = f'{device_name} {value_template}'
-    elif sensor_config[2] == 'timestamp':
-        hass_config_data["unique_id"] = f'{device_name}_{value_template}_victron'
-        hass_config_data["name"] = f'{device_name} {value_template}'
+    if unit == 'timestamp':
+        hass_config_data['device_class'] = 'timestamp'
     else:
-        hass_config_data["unique_id"] = f'{device_name}_{subtopic}_victron'
-        hass_config_data["name"] = f'{device_name} {subtopic}'
+        add_hass_sensor_metadata(hass_config_data, category, description, unit)
 
-    if sensor_config[2] == '%':
-        hass_config_data["device_class"] = 'battery'
-    elif sensor_config[2] == 'V':
-        hass_config_data["device_class"] = 'voltage'
-    elif sensor_config[2] == 'A' or sensor_config[2] == 'Ah':
-        hass_config_data["device_class"] = 'current'
-    elif sensor_config[2] == 'W':
-        hass_config_data["device_class"] = 'power'
-    elif sensor_config[2] == 'Wh' or sensor_config[2] == 'kWh':
-        hass_config_data["device_class"] = 'energy'
-        hass_config_data["state_class"] = 'total_increasing'
-    elif sensor_config[2] == 'min' or sensor_config[2] == 's':
-        hass_config_data["device_class"] = 'duration'
-    elif sensor_config[2] == 'Time':
-        hass_config_data["device_class"] = 'timestamp'
-    else:
-        pass
+    if category in ('Latest', 'Battery'):
+        hass_config_data['expire_after'] = 600
 
-    if sensor_config[2] != '' and sensor_config[2] != 'timestamp':
-        hass_config_data["unit_of_measurement"] = sensor_config[2]
-
-    if sensor_config[2] == 'timestamp':
-        #hass_config_data["display_options"] = "date_time"
-        hass_config_data["value_template"] = "{{ as_timestamp(now())  | timestamp_custom(\"%Y-%m-%d %H:%M:%S\") }}"
-
-    if sensor_config[0] == 'Latest':
-        hass_config_data["state_class"] = 'measurement'
-        hass_config_data["expire_after"] = 600
-
-    if sensor_config[0] == 'Battery':
-        hass_config_data["expire_after"] = 600
-
-    if sensor_config[0] == 'Time':
-        hass_config_data["value_template"] = "{% if value|string == '-1.0' %}infinit{% else %}{{ value }} minutes{% endif %}"
-
-    hass_config_data["state_topic"] = f'{base_topic}/{device_name}/{subtopic}'
-
+    # Direct topics now publish a single numeric value and need no template.
+    # Collections include each value as {'value': ..., 'unit': ..., 'updated': ...}.
     if collection is not None:
-        hass_config_data["value_template"] = "{{ value_json['" + value_template + "'] }}"
+        hass_config_data['value_template'] = "{{ value_json['" + value_template + "']['value'] }}"
 
     hass_device = {
         "identifiers": [f'victron_{device_name}'],
         "manufacturer": 'Victron',
-        "model": f'{model} Serial: {serial}',
+        "model": f'{model}' + (f' Serial: {serial}' if serial not in (None, '', 'SER# NOT SUPPORTED') else ''),
         "name": device_name,
         "sw_version": firmware
     }
@@ -201,22 +240,19 @@ def send_hass_config_payload(device_name, pid, ser, fw, mapping_table, base_topi
 
         output(device_name, hass_config_subtopic, hass_config_data, hass_config=True)
 
-    if len(list(mapping_table.items())) > 0:
-        subtopic_updated = list(mapping_table.items())[0][1][1]
-    else:
-        subtopic_updated = 'missing_mapping_table'
+    # Remove the legacy synthetic timestamp entry before registering its dedicated
+    # replacement. The new state topic receives an ISO-8601 timestamp per packet.
+    output(device_name, f'homeassistant/sensor/{slugify_identifier(device_name)}/Updated/config', '', True)
 
-    # Add an updated timestamp sensor
     hass_config_subtopic, hass_config_data = build_hass_discovery_config(
         device_name,
         pid,
         ser,
         fw,
-        ['', '', 'timestamp'],
+        ('Meta', 'Last Update', 'timestamp', 0, None),
         base_topic,
-        subtopic_updated,
-        'Updated',
+        'Last Update',
+        'Last Update',
         None
     )
-
     output(device_name, hass_config_subtopic, hass_config_data, True)

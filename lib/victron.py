@@ -76,8 +76,9 @@ class Victron:
         return False
 
     def output(self, category, value, vunit=None):
-        if not self.cmd.collection:
-            self.given_output(self.device_config['name'], category, value)
+        # Publish packet timestamps directly even when normal readings use collections.
+        if category == 'Last Update' or not self.cmd.collection:
+            self.given_output(self.device_config['name'], category, value, vunit=vunit)
         else:
             col_key = self.set_value_in_collections(category, value, vunit)
             if not col_key:

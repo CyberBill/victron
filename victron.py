@@ -90,6 +90,7 @@ def output_mqtt(device_name, subtopic, value, hass_config=False, vunit=None):
             else:
                 data = value
 
+    logger.debug(f'MQTT publish -> topic={pub} payload={data!r} type={type(data).__name__} retain={retain}')
     client.publish(pub, data, retain=retain)
 
 
