@@ -22,7 +22,7 @@ version = 0.1
 def victron_thread(thread_count, config, vdevice_config, thread_q):
     from lib.victron import Victron
     v = Victron(config, vdevice_config, output, args, thread_count, thread_q)
-    logger.debug("victron library loaded, start connect_diconnect_loop()")
+    logger.debug("victron library loaded, start connect_disconnect_loop()")
     v.connect_disconnect_loop()
 
 

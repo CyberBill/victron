@@ -23,7 +23,7 @@ class SmartshuntBLE:
 
     # UUID: (Category, Description, Unit, Multiplier, Signed?, Interpret_function)
     #'6597eeff-4bda-4c1e-af4b-551c4cf74769': ("Latest", "Consumed Ah", "Ah", 10, True, convert_value_number),
-    # This one exists as well, but we dont need it:
+    # This one exists as well, but we don't need it:
     # '6597ffff-4bda-4c1e-af4b-551c4cf74769': ("Special", "Keep-alive", "s", 1000, False, lib.helper.convert_value_number),
     MAP = {
         '6597ed8d-4bda-4c1e-af4b-551c4cf74769': ("Latest", "Voltage", "V", 100, True, lib.helper.convert_value_number),

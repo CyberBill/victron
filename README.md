@@ -159,13 +159,13 @@ Default the program will not exit on its own. If you want to collect the values 
 **bluetooth**: It will exit after the auto disconnect of the device and return all values gathered until then.
 
 ### FAQ
-#### No output shown with following log message "merror: Not connected"
-Please check if you paired the victron device correctly via bluetooth using bluetoothctl. If you changed the pin of the vicron device, delete and repair the device.
+#### No output shown with following log message "error: Not connected"
+Please check if you paired the Victron device correctly via Bluetooth using bluetoothctl. If you changed the PIN of the Victron device, delete and repair the device.
 
 ### Configuration in detail
 #### Device section
 **Mandatory:**
-Name, Type, Protocol and (MAC or serialport) depending of the type. bluetooth and bluetooth-ble need to have the bluetooth mac adress of the victron device specified.
+Name, type, protocol, and MAC address or serial port, depending on the type. Bluetooth and Bluetooth BLE need the Bluetooth MAC address of the Victron device specified.
 <br>
 Name: Choose yourself<br>
 Type: phoenix, smartshunt, smartsolar, orionsmart<br>
@@ -227,14 +227,14 @@ See configfile for more information!
 ## Known issues
 - The devices with bluetooth protocol are currently auto disconnecting after 30 seconds. This may prevent some values from being gathered.
 - Orion Smart must be more reverse engineered to get some more interesting values
-- Bluetooth: From smart solar you can't get the history values. The protocol itself is decoded (and working) for this part, but the smart solar doesn't send the data. I guess we need to send another init sequence. I didn't figure out the corrent sequence yet!
+- Bluetooth: You cannot get history values from SmartSolar. The protocol itself is decoded and working for this part, but SmartSolar does not send the data. Another initialization sequence may be needed; the correct sequence is not known yet.
 - Serial: Smart Solar history currently not gathered
 
 Feel free to help improving this repository.
 
 ## Future plans:
 - Choose via config file which values should be printed
-- Choose how often values should be printed (especially bluettooth with notifications)
+- Choose how often values should be printed (especially Bluetooth with notifications)
 - CMD Parameter instead of config (easier testing of new devices)
 - SmartSolar history values
 - Get device settings via serial and bluetooth

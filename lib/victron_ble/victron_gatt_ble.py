@@ -58,11 +58,11 @@ class AnyDevice(gatt.Device):
         time.sleep(0)
 
     def characteristic_write_value_failed(self, characteristic, error):
-        logger.warning(f"write failed on characteristic {characteristic.uuid} | merror: {error}")
+        logger.warning(f"write failed on characteristic {characteristic.uuid} | error: {error}")
         time.sleep(0)
 
     def characteristic_read_value_failed(self, characteristic, error):
-        logger.warning(f"read failed on characteristic {characteristic.uuid} | merror: {error}")
+        logger.warning(f"read failed on characteristic {characteristic.uuid} | error: {error}")
         time.sleep(0)
 
     def services_resolved(self):

@@ -116,7 +116,7 @@ class OrionSmart:
         # [NEW] Descriptor (Handle 0x2800)
         # 	/org/bluez/hci0/dev_E7_79_E6_1D_EF_04/service0023/char002a/desc002c
         # 	00002902-0000-1000-8000-00805f9b34fb
-        # 	Client Characteristic Configuratio
+        # 	Client Characteristic Configuration
     }
 
     def __init__(self, config):

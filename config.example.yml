@@ -9,7 +9,7 @@
 #      protocol: bluetooth
 #      mac: F9:8E:1C:EC:9C:72
 #    - name: Phoenix1
-#      type: pheonix
+#      type: phoenix
 #      protocol: serial
 #      port: /dev/ttyUSB0
 
@@ -56,7 +56,7 @@ mqtt:
     username: USERNAME
     password: PASSWORD
 
-# Collected enitites by device type:
+# Collected entities by device type:
 # If you change this, the names must be the same like in the value tables from victron.py
 # If you use collections it will send whole collection as json instead of individual values.
 #
@@ -94,7 +94,7 @@ mqtt:
 #      - Full Discharges
 #      - Battery Voltage min
 #      - Battery Voltage max
-#      - Synchonisations
+#      - Synchronizations
 #      - Alarm Voltage low
 #      - Alarm Voltage high
 #      - Starter Battery Voltage min

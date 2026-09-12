@@ -31,13 +31,13 @@ class Smartsolar:
         # handle "68ab"
         "0018": "97580003-ddf1-48be-b73e-182664615d8e",
         # handle "2560"
-        # decsr"": "00002902-0000-1000-8000-00805f9b34fb",
+        # descriptor"": "00002902-0000-1000-8000-00805f9b34fb",
         # handle "68ab"
         "001b": "97580004-ddf1-48be-b73e-182664615d8e",
         # handle "68ab"
         "001d": "97580006-ddf1-48be-b73e-182664615d8e",
         # handle "ece0"
-        # descr"": "00002902-0000-1000-8000-00805f9b34fb",
+        # descriptor"": "00002902-0000-1000-8000-00805f9b34fb",
         # handle "9abd"
         # primary"": "306b0001-b081-4037-83dc-e59fcc3cdfd0",
         # handle "68ab"
@@ -47,11 +47,11 @@ class Smartsolar:
         # handle "68ab"
         "0024": "306b0003-b081-4037-83dc-e59fcc3cdfd0",
         # handle "ed80"
-        # descr"": "00002902-0000-1000-8000-00805f9b34fb",
+        # descriptor"": "00002902-0000-1000-8000-00805f9b34fb",
         # handle "68ab"
         "0027": "306b0004-b081-4037-83dc-e59fcc3cdfd0",
         # handle "ed00"
-        # descr"": "00002902-0000-1000-8000-00805f9b34fb",
+        # descriptor"": "00002902-0000-1000-8000-00805f9b34fb",
     }
 
     def __init__(self, config):

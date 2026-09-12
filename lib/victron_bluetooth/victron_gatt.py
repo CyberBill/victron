@@ -101,7 +101,7 @@ class AnyDevice(gatt.Device):
         time.sleep(0)
 
     def characteristic_write_value_failed(self, characteristic, error):
-        logger.warning(f"write failed on charactersitic {characteristic.uuid}:merror: {error}")
+        logger.warning(f"write failed on characteristic {characteristic.uuid}: error: {error}")
         time.sleep(0)
 
     def characteristic_value_updated(self, characteristic, value):
@@ -144,7 +144,7 @@ class AnyDevice(gatt.Device):
                 c.enable_notifications(enabled=False)
             except:
                 logger.warning(f"{self.name}: Notifications: unsubscribe failed: {uuid}")
-        #print(f"{self.name}: disnable notifications done")
+        #print(f"{self.name}: disable notifications done")
         time.sleep(0)
 
     def start_send_init_squence(self):

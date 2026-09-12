@@ -168,7 +168,7 @@ def build_hass_discovery_config(device_name, model, serial, firmware, sensor_con
     :param model: model description of device
     :param serial: serial number of device
     :param firmware: firmware of device
-    :param sensor_config: mapping row from decive classes
+    :param sensor_config: mapping row from device classes
     :param base_topic: MQTT base topic
     :param subtopic: Subtopic is either the name of the sensor (e.g. Voltage) or of the collection (e.g. latest)
     :param value_template: sensor (e.g. Voltage)
