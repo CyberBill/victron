@@ -6,6 +6,38 @@ from vedirect import Vedirect
 
 logger = logging.getLogger()
 
+SMARTSHUNT_COMMANDS = {
+    'zero_current': {
+        'name': 'Zero Current',
+        'register': 0x1029,
+        'icon': 'mdi:current-dc',
+    },
+    'synchronize': {
+        'name': 'Synchronize Battery Monitor',
+        'register': 0x102C,
+        'icon': 'mdi:battery-sync',
+    },
+    'clear_history': {
+        'name': 'Clear SmartShunt History',
+        'register': 0x1030,
+        'icon': 'mdi:chart-timeline-variant-shimmer',
+    },
+    'restore_defaults': {
+        'name': 'Restore SmartShunt Defaults',
+        'register': 0x0004,
+        'icon': 'mdi:backup-restore',
+        'enabled_by_default': False,
+    },
+}
+
+
+def build_ve_hex_set_command(register):
+    """Build an official VE.Hex Set frame for a write-only BMV command register."""
+    command = 0x08
+    data = bytes((register & 0xFF, register >> 8, 0x00))
+    checksum = (0x55 - command - sum(data)) & 0xFF
+    return b':' + f'{command:X}'.encode('ascii') + data.hex().upper().encode('ascii') + f'{checksum:02X}'.encode('ascii') + b'\n'
+
 # hack! patch vedirect's read_data_callback method to support exiting the main loop
 
 #vedirect.read_data_callback = lambda self, callbackFunction:
@@ -26,6 +58,7 @@ class VictronSerial:
         self.name = device_config['name']
         self.type = device_config['type']
         self.port = device_config['port']
+        self.command_lock = threading.Lock()
 
         if self.type == 'phoenix':
             from lib.victron_serial.victron_phoenix import value_description_map
@@ -68,6 +101,38 @@ class VictronSerial:
 
     def get_mapping_table(self):
         return self.map
+
+    def get_supported_commands(self, include_restore_defaults=False):
+        if self.type != 'smartshunt':
+            return {}
+        if include_restore_defaults:
+            return SMARTSHUNT_COMMANDS
+        return {
+            action: command for action, command in SMARTSHUNT_COMMANDS.items()
+            if action != 'restore_defaults'
+        }
+
+    def execute_command(self, action, include_restore_defaults=False):
+        """Write one allowlisted VE.Hex command without interrupting serial reads."""
+        command = self.get_supported_commands(include_restore_defaults).get(action)
+        if command is None:
+            logger.warning(f'{self.name}: rejected unsupported command {action!r}')
+            return False
+
+        frame = build_ve_hex_set_command(command['register'])
+        try:
+            with self.command_lock:
+                if not self.ve.ser.is_open:
+                    logger.error(f'{self.name}: cannot execute {action}; serial port is closed')
+                    return False
+                self.ve.ser.write(frame)
+                self.ve.ser.flush()
+        except Exception:
+            logger.exception(f'{self.name}: failed to execute SmartShunt command {action}')
+            return False
+
+        logger.warning(f'{self.name}: sent SmartShunt command {action}')
+        return True
 
     def finished_target(self):
         logger.debug(f'{self.name} finished')

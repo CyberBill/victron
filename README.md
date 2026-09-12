@@ -211,7 +211,7 @@ or
 logger: json
 ```
 #### MQTT section
-Choose host, port, base_topic and if you want to use HomeAssistant Discovery (Yet only supported on serial devices). SSL and authentication will be added later.
+Choose host, port, base_topic and whether to enable Home Assistant Discovery. Authentication is supported with the optional `username` and `password` settings.
 ```buildoutcfg
 mqtt:
     host: 192.168.3.2
@@ -219,6 +219,11 @@ mqtt:
     base_topic: victron
     hass: True
 ```
+
+  ##### SmartShunt Home Assistant controls
+  For a serial SmartShunt, set `hass_commands: True` to publish Home Assistant MQTT buttons for **Zero Current**, **Synchronize Battery Monitor**, and **Clear SmartShunt History**. Each button only publishes the fixed `PRESS` payload to its dedicated command topic; arbitrary VE.Hex commands are never accepted.
+
+  `hass_restore_defaults` defaults to `False`. Set it to `True` only when a **Restore SmartShunt Defaults** button is explicitly required, because it overwrites SmartShunt settings. The device pauses normal VE.Direct text telemetry for several seconds after any command, and this integration reports that the frame was sent—not that the device acknowledged it.
 #### Collections section
 
 You can specify if you want the values get summarized into one json output statement. Otherwise it will send out every value as soon as it is collected from victron device. 

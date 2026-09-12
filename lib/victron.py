@@ -16,6 +16,8 @@ class Victron:
         self.thread_q = thread_q
         self.collections = None
         self.victron_type = None
+        self.commands_enabled = False
+        self.restore_defaults_enabled = False
 
         if self.cmd.collection:
             if device_config['name'] in self.config['collections']:
@@ -48,8 +50,31 @@ class Victron:
                                             self.given_output,
                                             self.collections)
 
+            self.commands_enabled = (
+                self.config['mqtt'].get('hass_commands', False)
+                and self.device_config['protocol'] == 'serial'
+                and self.device_config['type'] == 'smartshunt'
+            )
+            self.restore_defaults_enabled = self.config['mqtt'].get('hass_restore_defaults', False)
+            if self.commands_enabled:
+                helper.send_hass_button_config_payload(
+                    self.device_config['name'],
+                    pid,
+                    ser,
+                    fw,
+                    self.config['mqtt']['base_topic'],
+                    self.given_output,
+                    self.victron_type.get_supported_commands(self.restore_defaults_enabled),
+                )
+
     def connect_disconnect_loop(self):
         self.victron_type.connect_disconnect_loop(self.cmd, self.config['timer'])
+
+    def handle_command(self, action):
+        if not self.commands_enabled:
+            logger.warning(f'{self.device_config["name"]}: rejected command because controls are disabled')
+            return False
+        return self.victron_type.execute_command(action, self.restore_defaults_enabled)
 
     def reset_collection(self, collection_name):
         collection = {}

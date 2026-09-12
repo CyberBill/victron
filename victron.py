@@ -17,11 +17,16 @@ from enum import IntEnum
 from time import sleep
 
 version = 0.1
+command_handlers = {}
+command_handlers_lock = threading.Lock()
 
 
 def victron_thread(thread_count, config, vdevice_config, thread_q):
     from lib.victron import Victron
     v = Victron(config, vdevice_config, output, args, thread_count, thread_q)
+    if v.commands_enabled:
+        with command_handlers_lock:
+            command_handlers[vdevice_config['name']] = v.handle_command
     logger.debug("victron library loaded, start connect_disconnect_loop()")
     v.connect_disconnect_loop()
 
@@ -68,6 +73,32 @@ def output_syslog(device_name, category, value, hass_config=False, vunit=None):
 
 def mqtt_onconnect(client, userdata, flags, rc):
     client.publish(mqtt_lwt, payload=1, qos=0, retain=True)
+    if config['mqtt'].get('hass', False) and config['mqtt'].get('hass_commands', False):
+        command_topic = f'{config["mqtt"]["base_topic"]}/+/command/+'
+        client.subscribe(command_topic)
+        logger.info(f'MQTT command subscription established: {command_topic}')
+
+
+def mqtt_onmessage(client, userdata, message):
+    if message.retain or message.payload != b'PRESS':
+        logger.warning(f'Ignoring invalid MQTT command on {message.topic}')
+        return
+
+    prefix = f'{config["mqtt"]["base_topic"]}/'
+    if not message.topic.startswith(prefix):
+        return
+    topic_parts = message.topic[len(prefix):].split('/')
+    if len(topic_parts) != 3 or topic_parts[1] != 'command':
+        logger.warning(f'Ignoring invalid MQTT command topic: {message.topic}')
+        return
+
+    device_name, _, action = topic_parts
+    with command_handlers_lock:
+        handler = command_handlers.get(device_name)
+    if handler is None:
+        logger.warning(f'{device_name}: rejected MQTT command {action!r}; device controls are unavailable')
+        return
+    handler(action)
 
 
 def output_mqtt(device_name, subtopic, value, hass_config=False, vunit=None):
@@ -242,6 +273,7 @@ if __name__ == "__main__":
         mqtt_lwt = f'{config["mqtt"]["base_topic"]}/{devices_config["name"]}/online'
         client.will_set(mqtt_lwt, payload=0, qos=0, retain=True)
         client.on_connect = mqtt_onconnect
+        client.on_message = mqtt_onmessage
 
         client.connect(config['mqtt']['host'], config['mqtt']['port'], 60)
         client.loop_start()

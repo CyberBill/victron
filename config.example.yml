@@ -45,6 +45,8 @@ logger: mqtt
 ##   port: 1883
 ##   base_topic: victron
 ##   hass: True/False
+##   hass_commands: True/False (serial SmartShunt Home Assistant buttons; default False)
+##   hass_restore_defaults: True/False (also exposes destructive Restore Defaults button; default False)
 ## Optional:
 ##   username: MQTT_USER
 ##   password: PASSWORD
@@ -53,6 +55,8 @@ mqtt:
     port: 1883
     base_topic: victron
     hass: True
+    hass_commands: False
+    hass_restore_defaults: False
     username: USERNAME
     password: PASSWORD
 

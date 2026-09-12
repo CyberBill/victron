@@ -256,3 +256,35 @@ def send_hass_config_payload(device_name, pid, ser, fw, mapping_table, base_topi
         None
     )
     output(device_name, hass_config_subtopic, hass_config_data, True)
+
+
+def send_hass_button_config_payload(device_name, pid, ser, fw, base_topic, output, commands):
+    """Publish Home Assistant MQTT Button discovery for allowed device commands."""
+    device_id = slugify_identifier(device_name)
+    hass_device = {
+        "identifiers": [f'victron_{device_name}'],
+        "manufacturer": 'Victron',
+        "model": f'{pid}' + (f' Serial: {ser}' if ser not in (None, '', 'SER# NOT SUPPORTED') else ''),
+        "name": device_name,
+        "sw_version": fw,
+    }
+
+    for action, command in commands.items():
+        name = command['name']
+        hass_config_topic = f'homeassistant/button/{device_id}/{action}/config'
+        hass_config_data = {
+            'unique_id': f'victron_{device_id}_{action}',
+            'name': name,
+            'command_topic': f'{base_topic}/{device_name}/command/{action}',
+            'payload_press': 'PRESS',
+            'availability_topic': f'{base_topic}/{device_name}/online',
+            'payload_available': '1',
+            'payload_not_available': '0',
+            'entity_category': 'config',
+            'icon': command['icon'],
+            'device': hass_device,
+        }
+        if command.get('enabled_by_default') is False:
+            hass_config_data['enabled_by_default'] = False
+
+        output(device_name, hass_config_topic, json.dumps(hass_config_data), hass_config=True)
