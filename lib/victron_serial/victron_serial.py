@@ -2,9 +2,15 @@ import logging
 import time
 import threading
 from datetime import datetime
+from serial import SerialException
 from vedirect import Vedirect
 
 logger = logging.getLogger()
+
+SERIAL_READ_TIMEOUT = 1
+SERIAL_RECONNECT_DELAY = 5
+SERIAL_PACKET_TIMEOUT = 30
+SERIAL_WATCHDOG_INTERVAL = 5
 
 SMARTSHUNT_COMMANDS = {
     'zero_current': {
@@ -38,19 +44,6 @@ def build_ve_hex_set_command(register):
     checksum = (0x55 - command - sum(data)) & 0xFF
     return b':' + f'{command:X}'.encode('ascii') + data.hex().upper().encode('ascii') + f'{checksum:02X}'.encode('ascii') + b'\n'
 
-# hack! patch vedirect's read_data_callback method to support exiting the main loop
-
-#vedirect.read_data_callback = lambda self, callbackFunction:
-def read_data_callback(self, callbackFunction):
-    self.keep_running = True
-    while self.keep_running:
-        data = self.ser.read()
-        for byte in data:
-            packet = self.input(byte)
-            if (packet != None):
-                callbackFunction(packet)
-Vedirect.read_data_callback = read_data_callback
-
 class VictronSerial:
     def __init__(self, device_config, output_callback):
         self.device_config = device_config
@@ -59,6 +52,13 @@ class VictronSerial:
         self.type = device_config['type']
         self.port = device_config['port']
         self.command_lock = threading.Lock()
+        self.connection_lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.last_packet = None
+        self.last_packet_ready = threading.Event()
+        self.last_packet_at = time.monotonic()
+        self.timer_elapsed = True
+        self.ve = None
 
         if self.type == 'phoenix':
             from lib.victron_serial.victron_phoenix import value_description_map
@@ -70,15 +70,89 @@ class VictronSerial:
             raise RuntimeError(f'Got unknown type ({self.type}) from config!')
         self.map = value_description_map
 
-        self.ve = Vedirect(self.port, 60)
-        callback_wrapper = lambda packet: self.read_data_callback(packet)
-        self.thread = threading.Thread(target=self.ve.read_data_callback, args=(callback_wrapper,))
+        self.thread = threading.Thread(
+            target=self._read_loop,
+            name=f'victron-serial-{self.name}',
+        )
         self.thread.start()
-        # TODO: stop this thread when the application quits
+        self.watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            name=f'victron-serial-watchdog-{self.name}',
+        )
+        self.watchdog_thread.start()
 
-        self.last_packet = None
-        self.last_packet_ready = threading.Event()
-        self.timer_elapsed = True
+    def _read_loop(self):
+        """Keep the reader alive while the USB serial device is absent or reconnecting."""
+        while not self.stop_event.is_set():
+            ve = None
+            try:
+                ve = Vedirect(self.port, SERIAL_READ_TIMEOUT)
+                with self.connection_lock:
+                    self.ve = ve
+                    self.last_packet_at = time.monotonic()
+                logger.info(f'{self.name}: connected to serial port {self.port}')
+
+                while not self.stop_event.is_set():
+                    data = ve.ser.read()
+                    with self.connection_lock:
+                        if self.ve is not ve:
+                            break
+                    for byte in data:
+                        packet = ve.input(byte)
+                        if packet is not None:
+                            try:
+                                self.last_packet_at = time.monotonic()
+                                self.read_data_callback(packet)
+                            except Exception:
+                                logger.exception(f'{self.name}: failed to process serial packet')
+                            finally:
+                                self._discard_unknown_packet_fields(ve)
+            except (SerialException, OSError) as error:
+                if not self.stop_event.is_set():
+                    logger.warning(f'{self.name}: serial connection lost: {error}; retrying')
+            except Exception:
+                if not self.stop_event.is_set():
+                    logger.exception(f'{self.name}: serial reader failed; retrying')
+            finally:
+                with self.connection_lock:
+                    if self.ve is ve:
+                        self.ve = None
+                if ve is not None:
+                    try:
+                        ve.ser.close()
+                    except (SerialException, OSError):
+                        pass
+
+            self.stop_event.wait(SERIAL_RECONNECT_DELAY)
+
+    def _watchdog_loop(self):
+        """Reset a serial connection that stays open but stops yielding valid frames."""
+        while not self.stop_event.wait(SERIAL_WATCHDOG_INTERVAL):
+            with self.connection_lock:
+                ve = self.ve
+                inactive_for = time.monotonic() - self.last_packet_at
+                if ve is None or inactive_for < SERIAL_PACKET_TIMEOUT:
+                    continue
+                self.ve = None
+
+            logger.warning(
+                f'{self.name}: no valid VE.Direct packet for {inactive_for:.0f} seconds; '
+                'resetting serial connection'
+            )
+            try:
+                ve.ser.close()
+            except (SerialException, OSError):
+                pass
+
+    def _discard_unknown_packet_fields(self, ve):
+        """Keep valid values accumulated by vedirect while removing corrupted field names."""
+        packet_fields = getattr(ve, 'dict', None)
+        if packet_fields is None:
+            return
+        unknown_keys = set(packet_fields) - set(self.map)
+        for key in unknown_keys:
+            logger.warning(f'{self.name}: discarded invalid VE.Direct field {key!r}')
+            del packet_fields[key]
 
     def get_device_info(self):
         data = None
@@ -86,7 +160,7 @@ class VictronSerial:
             self.last_packet_ready.wait()
             self.last_packet_ready.clear()
             # on startup, sometimes incomplete packets show up
-            if all([x in self.last_packet for x in ['PID', 'FW']]):
+            if self.last_packet is not None and all(x in self.last_packet for x in ['PID', 'FW']):
                 data = self.last_packet
             else:
                 logging.info('Skipping incomplete packet, waiting for next packet for device info')
@@ -121,9 +195,9 @@ class VictronSerial:
 
         frame = build_ve_hex_set_command(command['register'])
         try:
-            with self.command_lock:
-                if not self.ve.ser.is_open:
-                    logger.error(f'{self.name}: cannot execute {action}; serial port is closed')
+            with self.command_lock, self.connection_lock:
+                if self.ve is None or not self.ve.ser.is_open:
+                    logger.error(f'{self.name}: cannot execute {action}; serial port is disconnected')
                     return False
                 self.ve.ser.write(frame)
                 self.ve.ser.flush()
@@ -131,7 +205,10 @@ class VictronSerial:
             logger.exception(f'{self.name}: failed to execute SmartShunt command {action}')
             return False
 
-        logger.warning(f'{self.name}: sent SmartShunt command {action}')
+        logger.warning(
+            f'{self.name}: sent SmartShunt command {action}; '
+            'the device does not provide an acknowledgement'
+        )
         return True
 
     def finished_target(self):
@@ -155,10 +232,16 @@ class VictronSerial:
                 self.timer_elapsed = True
 
     def shutdown(self):
-        if hasattr(self.ve, 'keep_running'):
-            logging.info(f'Shutting down {self.name} thread')
-            self.ve.keep_running = False
-            self.thread.join()
+        logger.info(f'Shutting down {self.name} thread')
+        self.stop_event.set()
+        with self.connection_lock:
+            if self.ve is not None:
+                try:
+                    self.ve.ser.close()
+                except (SerialException, OSError):
+                    pass
+        self.thread.join()
+        self.watchdog_thread.join()
 
     def read_data_callback(self, packet):
         logger.debug(f'Got data from port {self.port}: {packet}')

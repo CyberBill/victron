@@ -21,6 +21,84 @@ command_handlers = {}
 command_handlers_lock = threading.Lock()
 
 
+class LiveDashboard:
+    """Continuously render selected telemetry without replacing the configured output."""
+
+    tracked_categories = ('Voltage', 'Current', 'Power', 'State Of Charge')
+
+    def __init__(self, device_name, output, stream=None, refresh_interval=1, start=True):
+        self.device_name = device_name
+        self.output = output
+        self.stream = stream if stream is not None else sys.stdout
+        self.refresh_interval = refresh_interval
+        self.values = {}
+        self.last_device_update = None
+        self.last_output_handoff = None
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.thread = None
+        if start:
+            self.thread = threading.Thread(
+                target=self._render_loop,
+                name=f'victron-dashboard-{device_name}',
+                daemon=True,
+            )
+            self.thread.start()
+
+    def __call__(self, device_name, category, value, hass_config=False, vunit=None):
+        with self.lock:
+            if category in self.tracked_categories:
+                self.values[category] = (value, vunit)
+            if category == 'Last Update':
+                self.last_device_update = datetime.now().astimezone()
+
+        try:
+            return self.output(device_name, category, value, hass_config, vunit)
+        finally:
+            with self.lock:
+                self.last_output_handoff = datetime.now().astimezone()
+
+    @staticmethod
+    def _format_age(timestamp, now):
+        if timestamp is None:
+            return 'waiting for data'
+        return f'{max(0, int((now - timestamp).total_seconds()))}s ago'
+
+    def render(self):
+        now = datetime.now().astimezone()
+        with self.lock:
+            values = self.values.copy()
+            device_update_age = self._format_age(self.last_device_update, now)
+            output_handoff_age = self._format_age(self.last_output_handoff, now)
+
+        lines = [
+            f'Victron live dashboard — {self.device_name}',
+            'Press Ctrl+C to stop.',
+            '',
+        ]
+        for category in self.tracked_categories:
+            value, unit = values.get(category, ('—', ''))
+            suffix = f' {unit}' if unit else ''
+            lines.append(f'{category:<18} {value}{suffix}')
+        lines.extend((
+            '',
+            f'Last device update:  {device_update_age}',
+            f'Last output handoff: {output_handoff_age}',
+            'MQTT delivery status is logged separately.',
+        ))
+        self.stream.write('\033[2J\033[H' + '\n'.join(lines) + '\n')
+        self.stream.flush()
+
+    def _render_loop(self):
+        while not self.stop_event.wait(self.refresh_interval):
+            self.render()
+
+    def shutdown(self):
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join()
+
+
 def victron_thread(thread_count, config, vdevice_config, thread_q):
     from lib.victron import Victron
     v = Victron(config, vdevice_config, output, args, thread_count, thread_q)
@@ -79,6 +157,13 @@ def mqtt_onconnect(client, userdata, flags, rc):
         logger.info(f'MQTT command subscription established: {command_topic}')
 
 
+def mqtt_ondisconnect(client, userdata, rc):
+    if rc == 0:
+        logger.info('MQTT broker connection closed')
+    else:
+        logger.warning(f'MQTT broker connection lost (result code {rc}); reconnecting')
+
+
 def mqtt_onmessage(client, userdata, message):
     if message.retain or message.payload != b'PRESS':
         logger.warning(f'Ignoring invalid MQTT command on {message.topic}')
@@ -122,7 +207,9 @@ def output_mqtt(device_name, subtopic, value, hass_config=False, vunit=None):
                 data = value
 
     logger.debug(f'MQTT publish -> topic={pub} payload={data!r} type={type(data).__name__} retain={retain}')
-    client.publish(pub, data, retain=retain)
+    result = client.publish(pub, data, retain=retain)
+    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+        logger.warning(f'MQTT publish failed for {pub}: result code {result.rc}')
 
 
 def get_helper_string_device(devices):
@@ -164,7 +251,17 @@ if __name__ == "__main__":
                                      formatter_class=argparse.RawTextHelpFormatter)
     group01 = parser.add_argument_group()
     group01.add_argument("--debug", action="store_true", help="Set log level to debug")
+    group01.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Log parsed device packets to the application log without terminal debug output",
+    )
     group01.add_argument("--quiet", action="store_true", help="Set log level to error")
+    group01.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Show live voltage, current, power, and state of charge in the terminal",
+    )
 
     group02 = parser.add_argument_group()
     group02.add_argument(
@@ -255,15 +352,17 @@ if __name__ == "__main__":
     formatter = logging.Formatter(logger_format)
     handler.setFormatter(formatter)
 
-    if args.debug:
+    if args.debug or args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    if args.debug:
         handler.setLevel(logging.DEBUG)
     elif args.quiet:
         logging.getLogger().setLevel(logging.ERROR)
         handler.setLevel(logging.ERROR)
 
     if config['logger'] == 'mqtt':
-        logger.addHandler(handler)
+        if not args.dashboard:
+            logger.addHandler(handler)
 
         import paho.mqtt.client as mqtt
         client = mqtt.Client()
@@ -273,6 +372,7 @@ if __name__ == "__main__":
         mqtt_lwt = f'{config["mqtt"]["base_topic"]}/{devices_config["name"]}/online'
         client.will_set(mqtt_lwt, payload=0, qos=0, retain=True)
         client.on_connect = mqtt_onconnect
+        client.on_disconnect = mqtt_ondisconnect
         client.on_message = mqtt_onmessage
 
         client.connect(config['mqtt']['host'], config['mqtt']['port'], 60)
@@ -291,10 +391,19 @@ if __name__ == "__main__":
         logger.error('No output specified!')
         sys.exit(1)
 
+    dashboard = None
+    if args.dashboard:
+        dashboard = LiveDashboard(devices_config['name'], output)
+        output = dashboard
+
     q = queue.Queue()
 
     #logger.debug("Start worker thread")
     #t = threading.Timer(2+(1*5), victron_thread, args=(1, config, devices_config, q))
     #t.start()
 
-    victron_thread(1, config, devices_config, q)
+    try:
+        victron_thread(1, config, devices_config, q)
+    finally:
+        if dashboard is not None:
+            dashboard.shutdown()

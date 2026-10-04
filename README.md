@@ -84,7 +84,7 @@ There are some more commandline arguments, you can view them with `python3 victr
 ### Commandline arguments
 ```
 ./victron.py -h
-usage: victron.py [-h] [--debug] [--quiet] [-c] [-C CONFIG_FILE] [-D] [-v] [-d NUM / NAME]
+usage: victron.py [-h] [--debug] [--verbose] [--quiet] [--dashboard] [-c] [-C CONFIG_FILE] [-D] [-v] [-d NUM / NAME]
 
 Victron Reader (Bluetooth, BLE and Serial) 
 
@@ -108,7 +108,9 @@ options:
   -h, --help            show this help message and exit
 
   --debug               Set log level to debug
+  --verbose             Log parsed device packets to the application log
   --quiet               Set log level to error
+  --dashboard           Show live voltage, current, power, and state of charge
 
   -c, --collection      Output only collections specified in config instead of single values
   -C CONFIG_FILE, --config-file CONFIG_FILE
@@ -136,6 +138,12 @@ You need to specify the device from configuration which you want to connect to.
 #### Optional
 ##### --debug / --info
 Set log level.
+
+##### --verbose
+Record parsed device packets in the application log while keeping normal terminal output at its existing level. Use this for diagnostic captures without logging every individual serial read.
+
+##### --dashboard
+Show a continuously refreshed terminal dashboard for Voltage, Current, Power, and State Of Charge. It also displays the age of the last complete device update and the last handoff to the configured output. Normal MQTT publishing remains enabled, so this is useful for distinguishing stale device reads from publishing issues.
 
 ##### -c / --collection
 Define a collection to "merge" values in to one output instead of output every value separately. A collection must look like:
